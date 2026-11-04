@@ -1,0 +1,9 @@
+node_modules/
+*.cindy
+.DS_Store
+.env
+.env.*
+*.log
+coverage/
+.preview-data/
+*.cindy.sha256
