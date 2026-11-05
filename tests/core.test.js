@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
 import * as C from '../core.js';
 import {MonitorService} from '../service.js';
 
@@ -106,4 +107,33 @@ test('retention removes completed history but preserves unresolved deliveries',a
 test('corrupt configuration is not interpreted as a fresh installation',()=>{assert.throws(()=>C.validateState({version:0,monitors:[]}),{code:'STATE_UNAVAILABLE'});});
 test('delivery idempotency keys are stable per target and distinct across targets and dates',async()=>{
  const a=await C.deliveryKey('m_example','2026-11-03','self:');assert.equal(a,await C.deliveryKey('m_example','2026-11-03','self:'));assert.notEqual(a,await C.deliveryKey('m_example','2026-11-03','email:team@example.com'));assert.notEqual(a,await C.deliveryKey('m_example','2026-11-04','self:'));
+});
+
+test('the complete report counts its heading, whitespace and links within 3000 characters',async()=>{
+ const f=await saved();const heading='社区日报\n',source='\n来源：https://example.com/source';const body=heading+'结'.repeat(3000-heading.length-source.length)+source;
+ const args={monitor_id:f.monitor.id,expected_revision:f.monitor.revision,report_date:'2026-11-03',status:'ok',body,message_count:3};
+ await f.service.storeReport(args);const before=await f.service.getState();assert.equal(C.reportCharCount((await f.service.getReport(f.monitor.id,args.report_date)).body),3000);
+ await assert.rejects(f.service.storeReport({...args,body:body+'\n'}),{code:'REPORT_TOO_LONG'});
+ assert.deepEqual(await f.service.getState(),before);assert.equal((await f.service.getReport(f.monitor.id,args.report_date)).body,body);
+});
+test('report characters follow Unicode code points, including emoji, rather than UTF-16 units',()=>{
+ assert.equal(C.reportCharCount('结论\n😀'),4);assert.equal(C.validateReportBody('😀'.repeat(3000)),'😀'.repeat(3000));
+ assert.throws(()=>C.validateReportBody('😀'.repeat(3001)),{code:'REPORT_TOO_LONG'});
+ assert.throws(()=>C.validateReportBody(' \n '),{code:'INVALID_REPORT'});
+});
+test('an unsent legacy long report cannot acquire a delivery claim and must be summarized again',async()=>{
+ const f=await saved();await report(f);const path=C.reportPath(f.monitor.id,'2026-11-03');f.files.get(path).body='旧'.repeat(3001);
+ assert.equal((await f.service.getReport(f.monitor.id,'2026-11-03')).body.length,3001);
+ await assert.rejects(begin(f),{code:'REPORT_TOO_LONG'});assert.deepEqual(f.files.get(path).deliveries,{});
+ await f.service.storeReport({monitor_id:f.monitor.id,expected_revision:f.monitor.revision,report_date:'2026-11-03',status:'no_new',body:'简短日报：无新增。',message_count:0});assert.equal((await begin(f)).state,'claimed');
+});
+test('length changes do not clear successful or uncertain delivery receipts',async()=>{
+ for(const status of ['sent','uncertain']){const f=await saved();await report(f);const attempt=await begin(f);await complete(f,attempt,{status});const path=C.reportPath(f.monitor.id,'2026-11-03');f.files.get(path).body='旧'.repeat(3001);const result=await begin(f);assert.equal(result.state,status==='sent'?'already_sent':'needs_review');assert.equal(f.files.get(path).deliveries['self:'].status,status);}
+});
+test('preview and send generations both receive the same concise report policy',async()=>{
+ const f=await saved();await f.service.updateRuntime(f.monitor.id,r=>({...r,executionToken:'fixture-execution'}));
+ for(const mode of ['preview','send']){const p=await f.service.prepare(f.monitor.id,mode,undefined,mode==='send'?'fixture-execution':undefined);assert.equal(p.reportPolicy.maxChars,3000);assert.deepEqual(p.reportPolicy.preferredChars,[500,1000]);assert.equal(p.reportPolicy.counting,'unicode_code_points');assert.ok(C.taskPrompt(f.monitor.id,mode,'fixture-execution').includes('3000'));}
+});
+test('the distributable tool schema uses the same hard report limit as storage',async()=>{
+ const manifest=JSON.parse(await readFile(new URL('../ghost.json',import.meta.url),'utf8'));assert.equal(manifest.tools.find(t=>t.name==='store_report').parameters.properties.body.maxLength,C.MAX_REPORT_CHARS);
 });

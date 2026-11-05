@@ -22,3 +22,6 @@ Object.assign(strings.en,{selfMailPlaceholder:'Your primary email, verified duri
 
 Object.assign(strings['zh-CN'],{retrySetup:'重试连接检查',retryingSetup:'正在重试连接检查，复用原执行任务和已有账号连接…',setupDispatching:'正在提交连接检查…',setupDispatchUnknown:'检查请求待确认；点击“重试连接检查”可核对原请求。',setupAttention:'检查结果尚未保存，请点击“重试连接检查”。已有连接会复用，无需重复登录。'});
 Object.assign(strings.en,{retrySetup:'Retry connection check',retryingSetup:'Retrying with the original task and existing account connections…',setupDispatching:'Submitting the connection check…',setupDispatchUnknown:'Check request needs reconciliation. Retry to resolve the original request.',setupAttention:'Check result has not been saved. Retry the connection check using your existing connections.'});
+
+Object.assign(strings['zh-CN'],{reportLengthHelp:'通常 500–1000 字符，最多 3000 字符（含标题、标点、空格、换行和来源链接）。只保留关键结论，不逐条复述消息。',reportLengthCount:'{count} / {max} 字符'});
+Object.assign(strings.en,{reportLengthHelp:'Usually 500–1000 characters, at most 3000 including the title, punctuation, whitespace and source links. Summarize the key insights rather than repeating messages.',reportLengthCount:'{count} / {max} characters'});

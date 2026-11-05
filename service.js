@@ -43,7 +43,7 @@ export class MonitorService {
     if(mode==='send'&&!executionToken)return {state:'dispatch_required',monitor_id:id,next_tool:'dispatch_report',instruction:'调用 dispatch_report 复用配置阶段已经授权的固定执行任务。不要在当前回合重新请求读取或发送授权。'};
     const period=C.reportWindow(monitor.timezone,this.io.now(),date);
     const run=await this.readRun(monitor,period.date);
-    return {state:'ready',mode,monitor:C.clone(monitor),period,run,deliveryChannel:monitor.deliveryChannel??'chat',connection:monitor.runtime?.connection??null,scope:{platform:'discord',range:monitor.scope,sources:monitor.sources},recipients:monitor.recipients,history:(monitor.knownRunDates??[]).filter(d=>d<period.date).slice(-7),instructions:'按照 daily-report 手册读取真实消息并保存日报。只能使用配置检查过的飞书连接和所选渠道，账号变化时回配置修复。发送前逐个调用 begin_delivery；已投递、被占用或结果未知的目标不得重复发送。'};
+    return {state:'ready',mode,monitor:C.clone(monitor),period,run,deliveryChannel:monitor.deliveryChannel??'chat',connection:monitor.runtime?.connection??null,scope:{platform:'discord',range:monitor.scope,sources:monitor.sources},recipients:monitor.recipients,history:(monitor.knownRunDates??[]).filter(d=>d<period.date).slice(-7),reportPolicy:{maxChars:C.MAX_REPORT_CHARS,preferredChars:[500,1000],counting:'unicode_code_points',includes:['title','punctuation','whitespace','source_links'],guidance:C.REPORT_GUIDANCE},instructions:C.REPORT_GUIDANCE+' 按照 daily-report 手册读取真实消息并保存日报。只能使用配置检查过的飞书连接和所选渠道，账号变化时回配置修复。发送前逐个调用 begin_delivery；已投递、被占用或结果未知的目标不得重复发送。'};
   });}
   async storeReport(args) {return this.serial(async()=>{
     const {state,monitor}=await this.monitor(args.monitor_id);
@@ -52,12 +52,12 @@ export class MonitorService {
     C.ensure(monitor.revision===args.expected_revision,'REVISION_CONFLICT','配置已改变，请重新获取方案并采集。');
     C.validDate(args.report_date);
     C.ensure(['ok','no_new','collection_failed'].includes(args.status),'INVALID_REPORT','日报状态无效。');
-    C.ensure(typeof args.body==='string'&&args.body.trim().length>0&&args.body.length<=24000,'INVALID_REPORT','日报正文为空或超过 24000 字符。');
+    const body=C.validateReportBody(args.body);
     C.ensure(args.message_count===null||(Number.isSafeInteger(args.message_count)&&args.message_count>=0),'INVALID_REPORT','消息数必须是可核实的非负整数，未知时填 null。');
     C.ensure(args.status!=='no_new'||args.message_count===0,'INVALID_REPORT','无新增日报的消息数必须为 0。');
     const old=await this.readRun(monitor,args.report_date);
     if(Object.values(old?.deliveries??{}).some(d=>['sending','uncertain'].includes(d.status)))throw new C.MonitorError('DELIVERY_PENDING','已有投递尚未核对，不能覆盖该份日报。');
-    const run={version:1,monitorId:monitor.id,date:args.report_date,configRevision:monitor.revision,timezone:monitor.timezone,status:args.status,body:args.body.trim(),messageCount:args.message_count,coverage:typeof args.coverage==='string'?args.coverage.slice(0,2000):'',updatedAt:new Date(this.io.now()).toISOString(),deliveries:old?.deliveries??{}};
+    const run={version:1,monitorId:monitor.id,date:args.report_date,configRevision:monitor.revision,timezone:monitor.timezone,status:args.status,body,messageCount:args.message_count,coverage:typeof args.coverage==='string'?args.coverage.slice(0,2000):'',updatedAt:new Date(this.io.now()).toISOString(),deliveries:old?.deliveries??{}};
     await this.io.writeReport(C.reportPath(monitor.id,run.date),run);
     monitor.knownRunDates=[...new Set([...(monitor.knownRunDates??[]),run.date])].sort();
     monitor.lastRun={date:run.date,status:run.status,messageCount:run.messageCount,updatedAt:run.updatedAt};
@@ -77,6 +77,9 @@ export class MonitorService {
     const old=run.deliveries[recipient.key];
     if(old?.status==='sent')return {state:'already_sent',receipt:old};
     if(old && ['sending','uncertain'].includes(old.status))return {state:'needs_review',delivery:old,instruction:'先核对飞书真实投递结果，不能自动重新发送。'};
+    // Legacy history remains readable, but an unsent old report must meet the
+    // current length policy before it can reserve a new delivery.
+    C.validateReportBody(run.body);
     const channel=monitor.deliveryChannel??'chat';
     const resolvedAddress=channel==='mail'?(recipient.type==='self'?monitor.runtime.connection.mailboxAddress:recipient.value):null;
     if(channel==='mail')C.normalizeRecipient({type:'email',value:resolvedAddress},'mail');

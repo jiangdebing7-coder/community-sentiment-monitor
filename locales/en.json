@@ -22,7 +22,7 @@
       "description": "Read fresh sources, reporting dates, recipients and delivery state. Preview by default; sending needs a user request or saved automation. Follow the daily-report manual."
     },
     "store_report": {
-      "description": "Store a report based on real messages and verified counts. Collection failure is not no activity. Does not send messages."
+      "description": "Store a real concise report, at most 3000 Unicode characters including title, whitespace and links; normally 500–1000. Overlong reports must be summarized again. Does not send messages."
     },
     "begin_delivery": {
       "description": "Reserve delivery for one configured recipient. Send only for state=claimed, using the returned body and uuid. Do not resend already_sent or needs_review."

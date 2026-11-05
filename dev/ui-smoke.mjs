@@ -50,6 +50,8 @@ try{
  const cfg=await(await fetch(url+'/kv')).json();const monitor=cfg.monitors[0];
  await desktop.evaluate(`window.__previewHost.invokeTool('store_report',${JSON.stringify({monitor_id:monitor.id,expected_revision:monitor.revision,report_date:'2026-11-03',status:'no_new',body:'开发预览样报（虚构测试数据）\n\n昨日未检索到新增消息。\n玩家态度：数据不足，无法判断。\n本内容只用于测试界面，不代表真实社群情况。',message_count:0})})`);
  await desktop.until("!document.querySelector('#latest-card').hidden");
+ await desktop.until("document.querySelector('#report-length').textContent.includes(' / 3000 字符')");
+ assert.ok(await desktop.evaluate("document.querySelector('[data-i18n=reportLengthHelp]').textContent.includes('500–1000')"));
  // Viewing history must not mark the configuration dirty.
  await desktop.evaluate("document.querySelector('#report-date').dispatchEvent(new Event('change',{bubbles:true}))");assert.equal(await desktop.evaluate("document.querySelector('#dirty').hidden"),true);
  // Edits cannot silently disappear when changing monitors.
