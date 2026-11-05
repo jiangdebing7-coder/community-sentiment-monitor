@@ -4,7 +4,7 @@
  const style=document.createElement('style');style.textContent=dark?':root{color-scheme:dark;--panel-bg:#181a18;--surface:#222521;--surface-hover:#30342e;--text-primary:#eef0ea;--text-secondary:#a6ada0;--border-default:#41473c;--danger:#f2a7a3}':':root{color-scheme:light;--panel-bg:#f5f6f2;--surface:#fff;--surface-hover:#f0f2eb;--text-primary:#24291f;--text-secondary:#68725e;--border-default:#dce1d5;--danger:#b42318}';document.head.append(style);
  const originalFetch=window.fetch.bind(window);
  window.fetch=(input,options)=>String(input)==='/app-context'?Promise.resolve(new Response(JSON.stringify({ok:true,context:{region:'global',locale:qs.get('lang')||'zh-CN'}}),{headers:{'Content-Type':'application/json'}})):originalFetch(input,options);
- const listeners=[];const calls=new Map();let taskNumber=0,runNumber=0;const tasks=new Map(),runs=new Map();
+ const listeners=[];const calls=new Map();let taskNumber=0,runNumber=0;const tasks=new Map(),runs=new Map(),receipts=new Map();
  const event=data=>fetch('/dev/event',{method:'POST',body:JSON.stringify(data)});
  window.cindy={
   onHostMessage:fn=>{listeners.push(fn);return()=>{};},
@@ -17,9 +17,18 @@
    get:async({taskId})=>({...tasks.get(taskId)}),
    requestWriteAccess:async({taskId,mode})=>{await event({kind:'permission-request',taskId,mode});const task=tasks.get(taskId);task.permissionMode=mode;task.revision++;return {granted:true};},
    getRun:async({runId})=>({...runs.get(runId)}),
-   send:async args=>{await event({kind:'task-send',...args});const run={runId:'demo-run-'+(++runNumber),taskId:args.taskId,status:'completed'};runs.set(run.runId,run);
+   send:async args=>{
+    await event({kind:'task-send-attempt',...args});
+    const key=args.taskId+':'+args.requestKey,identity=JSON.stringify([args.text,args.expectedRevision]);
+    if(receipts.has(key)){const prior=receipts.get(key);if(prior.identity!==identity)throw Object.assign(new Error('Request key conflict'),{code:'IDEMPOTENCY_CONFLICT'});return {...prior.run};}
     const setup=args.text.match(/方案 (m_[a-f0-9]+)，检查令牌 ([a-f0-9-]+)/);
-    if(setup){const plan=await window.__previewHost.invokeTool('prepare_setup',{monitor_id:setup[1],setup_token:setup[2]});await window.__previewHost.invokeTool('complete_setup',{monitor_id:setup[1],setup_token:setup[2],success:true,source_checks:plan.monitor.sources.map(s=>({url:s.url,accessible:true})),connection:{pluginId:'example-feishu',namespace:null,accountOpenId:'ou_previewaccount123',accountName:'开发预览账号',mailboxAddress:'preview@example.com'}});}
+    const fault=setup?window.__previewHost.setupFault:null;if(setup)window.__previewHost.setupFault=null;
+    const task=tasks.get(args.taskId);
+    if(fault==='revision_conflict'){task.revision++;throw Object.assign(new Error('Task configuration changed'),{code:'REVISION_CONFLICT'});}
+    if(args.expectedRevision!==task.revision)throw Object.assign(new Error('Task configuration changed'),{code:'REVISION_CONFLICT'});
+    await event({kind:'task-send',...args});const run={runId:'demo-run-'+(++runNumber),taskId:args.taskId,status:'completed'};runs.set(run.runId,run);receipts.set(key,{identity,run});
+    if(setup){const plan=await window.__previewHost.invokeTool('prepare_setup',{monitor_id:setup[1],setup_token:setup[2]});if(fault==='write_rejected')await event({kind:'setup-write-rejected'});else await window.__previewHost.invokeTool('complete_setup',{monitor_id:setup[1],setup_token:setup[2],success:true,source_checks:plan.monitor.sources.map(s=>({url:s.url,accessible:true})),connection:{pluginId:'example-feishu',namespace:null,accountOpenId:'ou_previewaccount123',accountName:'开发预览账号',mailboxAddress:'preview@example.com'}});}
+    if(fault==='unknown_after_accept')throw Object.assign(new Error('Send acknowledgement lost'),{code:'HOST_NOT_READY'});
     return {...run};}
   },
   agent:{requestSchedule:async args=>{await event({kind:'schedule-draft',...args});return {ok:true};}}

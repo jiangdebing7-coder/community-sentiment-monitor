@@ -19,3 +19,6 @@ Object.assign(strings.en,{
 
 Object.assign(strings['zh-CN'],{selfMailPlaceholder:'本人主邮箱（连接检查后确定）'});
 Object.assign(strings.en,{selfMailPlaceholder:'Your primary email, verified during setup'});
+
+Object.assign(strings['zh-CN'],{retrySetup:'重试连接检查',retryingSetup:'正在重试连接检查，复用原执行任务和已有账号连接…',setupDispatching:'正在提交连接检查…',setupDispatchUnknown:'检查请求待确认；点击“重试连接检查”可核对原请求。',setupAttention:'检查结果尚未保存，请点击“重试连接检查”。已有连接会复用，无需重复登录。'});
+Object.assign(strings.en,{retrySetup:'Retry connection check',retryingSetup:'Retrying with the original task and existing account connections…',setupDispatching:'Submitting the connection check…',setupDispatchUnknown:'Check request needs reconciliation. Retry to resolve the original request.',setupAttention:'Check result has not been saved. Retry the connection check using your existing connections.'});

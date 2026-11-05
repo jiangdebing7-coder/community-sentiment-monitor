@@ -37,7 +37,7 @@
       "description": "Read source/account checks for the configuration-issued setup token. Does not authorize execution or send test messages."
     },
     "complete_setup": {
-      "description": "Record actual source, Feishu identity and mailbox checks after native execution approval. A stale or invented setup token is rejected."
+      "description": "Save only this monitor’s verified source/account checks. Does not send, change recipients or grant native permissions. A rejected write must not be bypassed."
     },
     "dispatch_report": {
       "description": "Trigger a report through the existing approved worker. Does not create a new permission flow. Unconfigured monitors stop unattended execution."

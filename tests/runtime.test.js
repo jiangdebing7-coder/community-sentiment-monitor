@@ -59,3 +59,63 @@ test('legacy v1 configurations stay in chat instead of silently switching to ema
 test('old automation prompts get redirected to the approved reusable worker',async()=>{const e=await configured();const plan=await e.service.prepare(e.monitor.id,'send');assert.equal(plan.state,'dispatch_required');assert.equal(plan.next_tool,'dispatch_report');const spec=await e.service.schedule(e.monitor.id);assert.ok(spec.prompt.includes('dispatch_report'));});
 test('legacy update callers cannot silently change an email monitor back to chat',async()=>{const e=await configured({deliveryChannel:'mail',time:'13:45'});const m=(await e.service.monitor(e.monitor.id)).monitor;const saved=await e.service.save({id:m.id,name:m.name,sources:m.sources.map(s=>s.url),recipients:m.recipients,focus:'更新关注事项'},m.revision);assert.equal(saved.deliveryChannel,'mail');assert.equal(saved.time,'13:45');assert.ok(C.setupReady(saved));});
 test('native configuration approval receives the exact bounded scope before any input is sent',async()=>{const e=await configured({deliveryChannel:'mail',recipients:[{type:'email',value:'reader@example.com'}]});const plan=e.tasks.get('task-1').plan;assert.equal(plan.concurrency,1);assert.ok(plan.task.includes(SOURCE));assert.ok(plan.task.includes('reader@example.com'));assert.ok(plan.task.includes('飞书邮件'));assert.equal(plan.items[0].workingDir,'/example/task-workspace');assert.equal(e.calls.plan,1);});
+
+test('a rejected setup dispatch preserves the previously issued token and remains retryable',async()=>{
+ const e=environment();e.monitor=await e.service.save(config(),0);await e.runtime.configure(e.monitor.id,'first-check');
+ const before=(await e.service.monitor(e.monitor.id)).monitor.runtime;
+ e.sdk.send=async()=>{throw Object.assign(new Error('Task configuration changed'),{code:'REVISION_CONFLICT'});};
+ await assert.rejects(e.runtime.configure(e.monitor.id,'retry-check'),{code:'REVISION_CONFLICT'});
+ const after=(await e.service.monitor(e.monitor.id)).monitor.runtime;
+ assert.equal(after.setupToken,before.setupToken);assert.equal(after.pendingInput,null);assert.equal(after.setupStatus,'needs_attention');
+ assert.equal(e.calls.create,1);assert.equal(e.calls.grant,1);
+});
+test('a definite native revision conflict refreshes once with the same setup request and token',async()=>{
+ const e=environment();e.monitor=await e.service.save(config(),0);await e.runtime.configure(e.monitor.id,'first-check');
+ const send=e.sdk.send,attempts=[];
+ e.sdk.send=async args=>{attempts.push(C.clone(args));if(attempts.length===1){e.tasks.get(args.taskId).revision++;throw Object.assign(new Error('Task configuration changed'),{code:'REVISION_CONFLICT'});}return send(args);};
+ await e.runtime.configure(e.monitor.id,'retry-check');await finishSetup(e);
+ assert.equal(attempts.length,2);assert.equal(attempts[0].requestKey,attempts[1].requestKey);assert.equal(attempts[0].text,attempts[1].text);assert.equal(attempts[1].expectedRevision,attempts[0].expectedRevision+1);
+ assert.ok(C.setupReady((await e.service.monitor(e.monitor.id)).monitor));assert.equal(e.calls.grant,1);
+});
+test('an unknown setup dispatch resumes the exact receipt request after a plugin restart',async()=>{
+ const e=environment();e.monitor=await e.service.save(config(),0);const send=e.sdk.send,receipts=new Map(),attempts=[];
+ e.sdk.send=async args=>{attempts.push(C.clone(args));if(receipts.has(args.requestKey))return C.clone(receipts.get(args.requestKey));const run=await send(args);receipts.set(args.requestKey,run);throw Object.assign(new Error('Connection lost after acceptance'),{code:'HOST_NOT_READY'});};
+ await assert.rejects(e.runtime.configure(e.monitor.id,'first-check'),{code:'HOST_NOT_READY'});
+ const pending=(await e.service.monitor(e.monitor.id)).monitor.runtime.pendingInput;
+ assert.ok(pending);assert.equal((await e.service.monitor(e.monitor.id)).monitor.runtime.setupToken??null,null);
+ const restarted=new MonitorRuntime(e.service,e.sdk);await restarted.configure(e.monitor.id,'retry-click');await finishSetup(e);
+ assert.deepEqual(attempts[0],attempts[1]);assert.equal(e.calls.send,1);assert.equal(e.calls.create,1);assert.equal(e.calls.grant,1);assert.equal((await e.service.monitor(e.monitor.id)).monitor.runtime.pendingInput,null);
+});
+test('legacy pending setup input recovers its actual token without replacing the request',async()=>{
+ const e=environment();e.monitor=await e.service.save(config(),0);await e.runtime.configure(e.monitor.id,'first-check');
+ const send=e.sdk.send;const token=crypto.randomUUID();const task=e.tasks.get('task-1');
+ const pending={requestKey:'legacy-pending-check',expectedRevision:task.revision,text:C.setupPrompt(e.monitor.id,token),mode:'setup'};
+ await e.service.updateRuntime(e.monitor.id,r=>({...r,setupToken:token,pendingInput:pending,setupStatus:'checking'}));
+ let observed;e.sdk.send=async args=>{observed=args;return send(args);};await e.runtime.configure(e.monitor.id,'new-click');await finishSetup(e);
+ assert.equal(observed.requestKey,pending.requestKey);assert.equal(observed.text,pending.text);assert.equal((await e.service.monitor(e.monitor.id)).monitor.runtime.setupToken,token);
+});
+test('a setup task that ends without writing a result shows attention even if its native status was already terminal',async()=>{
+ const e=environment();e.monitor=await e.service.save(config(),0);await e.runtime.configure(e.monitor.id,'first-check');
+ const status=await e.runtime.status(e.monitor.id);assert.equal(status.ready,false);assert.equal(status.runtime.setupStatus,'needs_attention');assert.ok(status.runtime.lastError);
+});
+test('a setup result may arrive before the native send acknowledgement',async()=>{
+ const e=environment();e.monitor=await e.service.save(config(),0);const send=e.sdk.send;
+ e.sdk.send=async args=>{const m=(await e.service.monitor(e.monitor.id)).monitor;const token=m.runtime.pendingInput.setupToken;assert.ok(token);await e.service.prepareSetup(m.id,token);await e.service.completeSetup({monitor_id:m.id,setup_token:token,success:true,source_checks:m.sources.map(s=>({url:s.url,accessible:true})),connection:{pluginId:'example-feishu',namespace:null,accountOpenId:'ou_exampleowner123'}});return send(args);};
+ const result=await e.runtime.configure(e.monitor.id,'first-check');assert.equal(result.state,'ready');assert.ok(C.setupReady((await e.service.monitor(e.monitor.id)).monitor));
+});
+test('a saved setup result survives a lost acknowledgement without being marked ready prematurely',async()=>{
+ const e=environment();e.monitor=await e.service.save(config(),0);const send=e.sdk.send;let receipt;
+ e.sdk.send=async args=>{if(receipt)return C.clone(receipt);const m=(await e.service.monitor(e.monitor.id)).monitor;await e.service.completeSetup({monitor_id:m.id,setup_token:m.runtime.pendingInput.setupToken,success:true,source_checks:m.sources.map(s=>({url:s.url,accessible:true})),connection:{pluginId:'example-feishu',namespace:null,accountOpenId:'ou_exampleowner123'}});receipt=await send(args);throw Object.assign(new Error('Acknowledgement lost'),{code:'HOST_NOT_READY'});};
+ await assert.rejects(e.runtime.configure(e.monitor.id,'first-check'),{code:'HOST_NOT_READY'});assert.ok(!C.setupReady((await e.service.monitor(e.monitor.id)).monitor));
+ const result=await e.runtime.configure(e.monitor.id,'retry');assert.equal(result.state,'ready');const m=(await e.service.monitor(e.monitor.id)).monitor;assert.ok(C.setupReady(m));assert.equal(m.runtime.lastError,null);assert.equal(e.calls.send,1);
+});
+test('changing sources cannot recover or dispatch a pending check for the old scope',async()=>{
+ const e=environment();e.monitor=await e.service.save(config(),0);e.fail();await assert.rejects(e.runtime.configure(e.monitor.id,'first-check'),{code:'HOST_NOT_READY'});
+ const m=(await e.service.monitor(e.monitor.id)).monitor;await e.service.save({...m,sources:['https://discord.gg/changedCommunity']},m.revision);
+ await assert.rejects(e.runtime.configure(m.id,'retry'),{code:'DISPATCH_UNCERTAIN'});assert.equal(e.calls.send,1);assert.equal(e.calls.create,1);assert.equal(e.calls.grant,1);
+});
+test('a conflicting receipt is kept for review, never cleared or replaced with a fresh request',async()=>{
+ const e=environment();e.monitor=await e.service.save(config(),0);e.sdk.send=async()=>{throw Object.assign(new Error('Request key was used with different input'),{code:'IDEMPOTENCY_CONFLICT'});};
+ await assert.rejects(e.runtime.configure(e.monitor.id,'first-check'),{code:'IDEMPOTENCY_CONFLICT'});const first=(await e.service.monitor(e.monitor.id)).monitor.runtime.pendingInput;
+ await assert.rejects(e.runtime.configure(e.monitor.id,'retry'),{code:'IDEMPOTENCY_CONFLICT'});assert.deepEqual((await e.service.monitor(e.monitor.id)).monitor.runtime.pendingInput,first);assert.equal(e.calls.create,1);assert.equal(e.calls.grant,1);
+});

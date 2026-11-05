@@ -2,6 +2,10 @@ import * as C from './core.js';
 
 const ACTIVE=new Set(['queued','running','stopping','reconciling']);
 const APPROVED=new Set(['auto','bypassPermissions']);
+// Verified in Cindy 0.1.121: these errors occur before the send receipt is
+// inserted. A timeout, lost response or idempotency conflict is NOT rejection.
+const REJECTED=new Set(['PERMISSION_DENIED','TASK_BUSY','INVALID_REQUEST','ROUTE_UNAVAILABLE','REVISION_CONFLICT']);
+const INCOMPLETE_SETUP='连接检查已结束，但结果尚未保存。请点击“重试连接检查”；已有账号连接会复用，无需重复登录。';
 
 // Native permissions remain owned by Cindy. Only the configuration action may
 // request Auto; send/scheduled actions can only reuse an already approved task.
@@ -27,18 +31,61 @@ export class MonitorRuntime {
     const run=await this.tasks.getRun({runId:r.lastNativeRunId});
     return ACTIVE.has(run.status)?run:null;
   }
-  async submit(monitor,task,text,requestKey,mode){
-    const pending={requestKey,expectedRevision:task.revision,text,mode};
-    await this.service.updateRuntime(monitor.id,r=>({...r,pendingInput:pending}));
-    let run;
-    try{run=await this.tasks.send({taskId:task.taskId,expectedRevision:pending.expectedRevision,requestKey,text});}
-    catch(error){
-      if(['PERMISSION_DENIED','TASK_BUSY','INVALID_REQUEST','ROUTE_UNAVAILABLE'].includes(error.code))await this.service.updateRuntime(monitor.id,r=>({...r,pendingInput:null,lastError:error.message}));
-      throw error;
+  assertApproved(task){
+    C.ensure(task?.status==='active','TASK_UNAVAILABLE','原执行任务已归档或删除，请在 Cindy 中恢复后继续。');
+    C.ensure(APPROVED.has(task.permissionMode)&&!task.planModeEnabled,'AUTHORIZATION_REQUIRED','原任务的执行授权已改变，请在该任务中恢复授权，再回配置页重试。');
+  }
+  async submit(monitor,task,text,requestKey,mode,setupToken){
+    // Refresh immediately before dispatch; permission/plan confirmation can
+    // change the native revision. Do not activate a new token before acceptance.
+    task=await this.tasks.get({taskId:task.taskId});this.assertApproved(task);
+    const pending={requestKey,expectedRevision:task.revision,text,mode,taskId:task.taskId,scope:C.authorizationScope(monitor),...(mode==='setup'?{setupToken}:{})};
+    await this.service.updateRuntime(monitor.id,(r,m)=>{
+      C.ensure(C.authorizationScope(m)===pending.scope&&r.taskId===task.taskId,'SETUP_EXPIRED','配置范围已改变，请使用当前配置重新检查。');
+      return {...r,pendingInput:pending,...(mode==='setup'?{setupStatus:'dispatching'}:{})};
+    });
+    return this.sendPending(monitor.id,pending);
+  }
+  async sendPending(id,input){
+    const pending=C.clone(input);let run;
+    try{
+      for(let attempt=0;;attempt++){
+        const {monitor}=await this.service.monitor(id);
+        C.ensure(monitor?.enabled&&C.authorizationScope(monitor)===pending.scope&&monitor.runtime.taskId===pending.taskId,'SETUP_EXPIRED','配置范围已改变，不能继续旧检查；请回配置页核对。');
+        try{run=await this.tasks.send({taskId:pending.taskId,expectedRevision:pending.expectedRevision,requestKey:pending.requestKey,text:pending.text});break;}
+        catch(error){
+          // This particular error guarantees no receipt/dispatch exists, so it
+          // is safe to refresh the revision once, retaining the key and text.
+          if(error.code!=='REVISION_CONFLICT'||attempt!==0)throw error;
+          const fresh=await this.tasks.get({taskId:pending.taskId});this.assertApproved(fresh);
+          pending.expectedRevision=fresh.revision;
+          await this.service.updateRuntime(id,(r,m)=>{
+            C.ensure(C.authorizationScope(m)===pending.scope&&r.pendingInput?.requestKey===pending.requestKey,'SETUP_EXPIRED','当前检查已改变，请返回配置页。');
+            return {...r,pendingInput:C.clone(pending)};
+          });
+        }
+      }
+    }catch(error){
+      const rejected=REJECTED.has(error.code);
+      const message=pending.mode==='setup'?(rejected?'本次检查未能派发，请点击“重试连接检查”。已有账号连接和先前检查令牌已保留。':'检查请求的派发结果待确认。请点击“重试连接检查”核对原请求，不会更换请求重复执行。')+' '+(error.message||''):error.message;
+      await this.service.updateRuntime(id,(r,m)=>{
+        if(r.pendingInput?.requestKey!==pending.requestKey)return r;
+        const completed=pending.mode==='setup'&&r.completedSetupToken===pending.setupToken;
+        return {...r,pendingInput:rejected?null:r.pendingInput,lastError:completed?r.lastError:message,...(pending.mode==='setup'&&C.authorizationScope(m)===pending.scope&&!completed?{setupStatus:rejected?'needs_attention':'dispatch_uncertain'}:{})};
+      });
+      await this.changed();throw new C.MonitorError(error.code||'DISPATCH_UNCERTAIN',message);
     }
-    await this.service.updateRuntime(monitor.id,r=>({...r,pendingInput:null,lastNativeRunId:run.runId,lastNativeStatus:run.status,lastRequestKey:requestKey,lastMode:mode,lastError:run.error??null,...(mode==='setup'?{setupRunId:run.runId}:{})}));
+    await this.service.updateRuntime(id,(r,m)=>{
+      const next={...r,pendingInput:null,lastNativeRunId:run.runId,lastNativeStatus:run.status,lastRequestKey:pending.requestKey,lastMode:pending.mode,lastError:run.error??null};
+      if(pending.mode==='setup'&&C.authorizationScope(m)===pending.scope&&r.taskId===pending.taskId){
+        const completed=r.completedSetupToken===pending.setupToken;
+        const incomplete=!ACTIVE.has(run.status)&&!completed;
+        Object.assign(next,{setupRunId:run.runId,setupToken:pending.setupToken,setupStatus:completed?r.setupStatus:incomplete?'needs_attention':'checking',readyScope:completed?r.readyScope:null,lastError:completed&&r.setupStatus==='ready'?null:completed?r.lastError:run.error||(incomplete?INCOMPLETE_SETUP:null)});
+      }
+      return next;
+    });
     await this.changed();
-    return {accepted:true,state:run.status,taskId:task.taskId,runId:run.runId,mode};
+    return {accepted:true,state:run.status,taskId:pending.taskId,runId:run.runId,mode:pending.mode};
   }
   async configure(id,requestId){return this.exclusive(id,async()=>{
     await this.capabilities();
@@ -63,13 +110,24 @@ export class MonitorRuntime {
     }
     C.ensure(APPROVED.has(task.permissionMode)&&!task.planModeEnabled,'AUTHORIZATION_REQUIRED','原任务尚未获得自动执行授权，请在该任务权限菜单中完成确认。');
     ({monitor}=await this.service.monitor(id));
+    if(monitor.runtime.pendingInput){
+      const p=monitor.runtime.pendingInput;
+      C.ensure(p.mode==='setup','DISPATCH_UNCERTAIN','原报告的派发结果待核对，请先查看原执行任务；本次不重复派发报告。');
+      // 1.1.0 stored the exact input but not its metadata. Recover that same
+      // input/token, never replace it with a new check or a new task.
+      const pending={...p,taskId:p.taskId??monitor.runtime.taskId,scope:p.scope??monitor.runtime.taskScope,setupToken:p.setupToken??monitor.runtime.setupToken};
+      C.ensure(pending.scope===C.authorizationScope(monitor)&&pending.taskId===task.taskId&&pending.setupToken,'DISPATCH_UNCERTAIN','旧检查与当前配置范围不一致，请先在原任务核对，不能自动重发。');
+      await this.service.updateRuntime(id,r=>({...r,pendingInput:pending}));
+      const result=await this.sendPending(id,pending);const latest=(await this.service.monitor(id)).monitor;
+      return {...result,state:C.setupReady(latest)?'ready':latest.runtime.setupStatus};
+    }
     if(C.setupReady(monitor))return {state:'ready',taskId:task.taskId};
     const active=await this.active(monitor);if(active)return {state:'checking',taskId:task.taskId,runId:active.runId,accepted:true};
     const scope=C.authorizationScope(monitor);const token=crypto.randomUUID();
-    await this.service.updateRuntime(id,r=>({...r,authorizedScope:scope,permissionMode:task.permissionMode,setupStatus:'checking',setupToken:token,lastError:null}));
-    const result=await this.submit(monitor,task,C.setupPrompt(id,token),'cm-setup-'+requestId,'setup');
+    await this.service.updateRuntime(id,(r,m)=>{C.ensure(C.authorizationScope(m)===scope,'SETUP_EXPIRED','配置范围已改变，请使用当前配置重新检查。');return {...r,authorizedScope:scope,permissionMode:task.permissionMode,lastError:null};});
+    const result=await this.submit(monitor,task,C.setupPrompt(id,token),'cm-setup-'+requestId,'setup',token);
     const latest=(await this.service.monitor(id)).monitor;
-    return {...result,state:C.setupReady(latest)?'ready':'checking'};
+    return {...result,state:C.setupReady(latest)?'ready':latest.runtime.setupStatus};
   });}
   async start(id,mode,requestId){return this.exclusive(id,async()=>{
     await this.capabilities();
@@ -96,9 +154,16 @@ export class MonitorRuntime {
     return this.start(id,'send','daily-'+id+'-'+date);
   }
   async status(id){
-    const {monitor}=await this.service.monitor(id);C.ensure(monitor,'MONITOR_NOT_FOUND','方案不存在。');
+    let {monitor}=await this.service.monitor(id);C.ensure(monitor,'MONITOR_NOT_FOUND','方案不存在。');
     const r=monitor.runtime??{};let native=null;
-    if(r.lastNativeRunId){native=await this.tasks.getRun({runId:r.lastNativeRunId});if(native.status!==r.lastNativeStatus){await this.service.updateRuntime(id,(current,currentMonitor)=>({...current,lastNativeStatus:native.status,...(native.error?{lastError:native.error}:{}),...(current.lastMode==='setup'&&current.setupStatus==='checking'&&['completed','failed','cancelled','interrupted'].includes(native.status)&&!C.setupReady(currentMonitor)?{setupStatus:'needs_attention',lastError:native.error||'连接检查尚未确认完成，请打开原执行任务查看并回配置页重试。'}:{})}));await this.changed();}}
+    if(r.lastNativeRunId&&!r.pendingInput){
+      native=await this.tasks.getRun({runId:r.lastNativeRunId});
+      const incomplete=r.lastMode==='setup'&&r.setupStatus==='checking'&&!r.pendingInput&&!ACTIVE.has(native.status)&&!C.setupReady(monitor);
+      if(native.status!==r.lastNativeStatus||incomplete){
+        monitor=await this.service.updateRuntime(id,(current,currentMonitor)=>({...current,lastNativeStatus:native.status,...(native.error?{lastError:native.error}:{}),...(current.lastMode==='setup'&&current.setupStatus==='checking'&&!current.pendingInput&&!ACTIVE.has(native.status)&&!C.setupReady(currentMonitor)?{setupStatus:'needs_attention',lastError:native.error||INCOMPLETE_SETUP}:{})}));
+        await this.changed();
+      }
+    }
     return {ready:C.setupReady(monitor),runtime:monitor.runtime,native};
   }
 }
