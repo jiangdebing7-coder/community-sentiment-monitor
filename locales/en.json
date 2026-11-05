@@ -1,17 +1,46 @@
 {
-  "name":"Community Sentiment Monitor",
-  "description":"Configure Discord communities, daily report time and Feishu recipients, with source evidence and delivery receipts.",
-  "whenToUse":"Monitor Discord discussions, summarize community sentiment, configure daily report sources and recipients, inspect reports or set up daily digests.",
-  "mainView":{"title":"Community monitor"},
-  "panel":{"title":"Community monitor"},
-  "tools":{
-    "list_monitors":{"description":"Read monitors, configuration revisions and recent run status in this installation. Does not read chats or send messages."},
-    "save_monitor":{"description":"Save sources and recipients only when the user requests configuration changes. Returns the updated revision. Never prefill another user's settings."},
-    "delete_monitor":{"description":"Delete a monitor only on the user's request. This does not delete a native Cindy automation; direct the user to manage it separately."},
-    "prepare_run":{"description":"Read fresh sources, reporting dates, recipients and delivery state. Preview by default; sending needs a user request or saved automation. Follow the daily-report manual."},
-    "store_report":{"description":"Store a report based on real messages and verified counts. Collection failure is not no activity. Does not send messages."},
-    "begin_delivery":{"description":"Reserve delivery for one configured recipient. Send only for state=claimed, using the returned body and uuid. Do not resend already_sent or needs_review."},
-    "complete_delivery":{"description":"Record a real external delivery result. Sent requires an actual om_ message receipt. Keep unknown outcomes uncertain; never invent a receipt."},
-    "prepare_schedule":{"description":"Prepare the exact daily cron, time zone and prompt for native Cindy Automation. A prepared draft is not an enabled schedule."}
+  "name": "Community Sentiment Monitor",
+  "description": "Complete setup once, then send Discord reports on demand or daily to Feishu chat or email.",
+  "whenToUse": "Monitor Discord discussions, summarize community sentiment, configure daily report sources and recipients, inspect reports or set up daily digests.",
+  "mainView": {
+    "title": "Community monitor"
+  },
+  "panel": {
+    "title": "Community monitor"
+  },
+  "tools": {
+    "list_monitors": {
+      "description": "Read monitors, configuration revisions and recent run status in this installation. Does not read chats or send messages."
+    },
+    "save_monitor": {
+      "description": "Save sources and recipients only when the user requests configuration changes. Returns the updated revision. Never prefill another user's settings."
+    },
+    "delete_monitor": {
+      "description": "Delete a monitor only on the user's request. This does not delete a native Cindy automation; direct the user to manage it separately."
+    },
+    "prepare_run": {
+      "description": "Read fresh sources, reporting dates, recipients and delivery state. Preview by default; sending needs a user request or saved automation. Follow the daily-report manual."
+    },
+    "store_report": {
+      "description": "Store a report based on real messages and verified counts. Collection failure is not no activity. Does not send messages."
+    },
+    "begin_delivery": {
+      "description": "Reserve delivery for one configured recipient. Send only for state=claimed, using the returned body and uuid. Do not resend already_sent or needs_review."
+    },
+    "complete_delivery": {
+      "description": "Record a real external delivery result. Sent requires an actual om_ message receipt. Keep unknown outcomes uncertain; never invent a receipt."
+    },
+    "prepare_schedule": {
+      "description": "Prepare the exact daily cron, time zone and prompt for native Cindy Automation. A prepared draft is not an enabled schedule."
+    },
+    "prepare_setup": {
+      "description": "Read source/account checks for the configuration-issued setup token. Does not authorize execution or send test messages."
+    },
+    "complete_setup": {
+      "description": "Record actual source, Feishu identity and mailbox checks after native execution approval. A stale or invented setup token is rejected."
+    },
+    "dispatch_report": {
+      "description": "Trigger a report through the existing approved worker. Does not create a new permission flow. Unconfigured monitors stop unattended execution."
+    }
   }
 }

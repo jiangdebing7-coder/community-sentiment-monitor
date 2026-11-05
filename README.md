@@ -1,6 +1,6 @@
 # 社群舆情监控
 
-一个可自主配置的 **Cindy 插件**：读取 Discord 社群讨论，生成有证据、可回溯的中文或英文日报，再发送给指定的飞书个人或群聊。
+一个可自主配置的 **Cindy 插件**：首次配置集中完成授权与连接检查，之后点击“发送报告”，或在每天固定时间自动执行。日报可选择发送为**飞书聊天消息**或**飞书邮件**。
 
 **[下载 .cindy 安装包](https://github.com/jiangdebing7-coder/community-sentiment-monitor/releases/latest)**
 
@@ -9,36 +9,41 @@
 - 管理多个监测方案，每个方案配置 1–8 个 Discord 社群入口或频道。
 - 选择整个服务器，或只读取指定频道。
 - 配置日报时间、IANA 时区、关注事项与报告语言；按前一自然日统计，处理夏令时。
-- 自主选择接收人：自己、飞书账号邮箱、用户 open_id、群聊 chat_id；每个方案最多 8 个目标。
+- 自主选择渠道与接收人：聊天可发给本人、按邮箱定位的聊天用户、用户 open_id 或群聊；邮件发往收件邮箱。每个方案最多 8 个目标。
+- 同一配置范围复用一个已授权的固定任务，不再每次发送都新建审批任务。
 - 一键预览，或生成并发送；无新增也能生成日报。
 - 在插件内查看历史日报和逐目标发送状态，保留真实回执。
 - 对重复运行、部分目标失败和结果未知分别处理，避免把已收到的日报再次推送。
 - 中英文界面随 Cindy 语言切换，支持浅色、深色与窄屏。
 
-第一版支持 **Discord → 飞书**。每位使用者使用自己的模型、Discord 登录状态及飞书连接，安装包中没有预置社区、个人账号、日报记录或密钥。
+当前支持 **Discord → 飞书聊天 / 飞书邮件**。每位使用者使用自己的模型、Discord 登录状态及飞书连接，安装包中没有预置社区、个人账号、日报记录或密钥。
 
 ## 安装与开始使用
 
-1. 使用 **Cindy 0.1.121 或更高版本**，从 Releases 下载 .cindy 文件并导入 Cindy。
-2. 核对并允许插件声明的能力：保存自己的配置和报告、创建可见的 Cindy 任务、请求打开原生自动化创建页、显示报告未读角标。
-3. 打开“社群舆情监控”，新建方案，填写 Discord 链接、范围、日报时间、时区及飞书接收目标，点击“保存并应用”。
-4. 在 Cindy 使用的浏览器中登录有权查看相应社群的 Discord 账号；连接使用者自己的飞书插件账号。仅发本人时，也可使用已经完成主人绑定的 Cindy 飞书机器人。
-5. 先点“预览日报”。确认读取的是所需社区、日期和讨论后，再点“生成并发送”。
-6. 需要每天执行时，使用下面的定时配置步骤。
+1. 使用 **Cindy 0.1.121 或更高版本**，下载 Releases 中的新 .cindy 包并导入/更新。
+2. 打开插件，填写社区、监测范围、日报时间和时区。
+3. 明确选择接收渠道：“飞书聊天消息”或“飞书邮件收件箱”，再填写对应目标。选择聊天渠道时，用邮箱查找用户仍然发送聊天，不会产生邮件。
+4. 点击 **保存并完成授权**。插件注册当前来源与目标的完整执行范围，请 Cindy 原生确认 Auto 权限，并在同一固定任务中检查 Discord 及飞书连接。首次缺少登录或 OAuth 连接时，在此配置阶段完成；不会发送测试消息或测试邮件。
+5. 配置显示“已就绪”后，按需点击 **发送报告**。正常情况下复用已完成的授权与连接，不重新创建一个审批任务。
+6. 需要每天执行时，点击“创建每日任务”，在 Cindy 原生自动化页核对时间、时区和模型并保存一次。
 
-无需另装 Node、提供模型 API key 或部署独立后台服务。开发命令所需的 Node 仅用于维护源码和测试。
+每个配置范围使用固定可见任务，使用者可在 Cindy 中查看和停止。不会选择完全访问来绕过原生确认，也不会伪造授权成功。更换社区、收件人或渠道时需要为新的范围确认一次；仅调整时间、关注事项或保留时间不重新请求相同范围的执行授权。账号过期、权限被撤销或任务被归档时会提示回配置修复，不在发送时循环弹授权。
 
-## 定时日报
+无需另装 Node、提供模型 API key 或部署独立后台服务。运行时使用每位使用者自己认可的模型与连接器。开发命令所需的 Node 仅用于维护源码和测试。
 
-有两种原生使用方式：
+## 每天固定时间发送一次
 
-**从插件界面创建**：点击“创建每日任务”，Cindy 会收到一份自动化草稿。请在原生创建页核对每天的执行时间、时区和模型，然后保存。插件中设置的时间会写在建议与指令里；当前宿主草稿 API 不接收 cron/timezone，仍需在创建页核对一次。草稿请求成功不等于自动化已启用。
+首次在 Cindy 原生自动化页核对每天的时间与时区并保存；之后按固定时间触发。当前宿主草稿 API 不直接接收 cron/timezone，因此仍须在创建页确认一次。插件不会把一个草稿说成已经启用。
 
-**从 Cindy 对话创建**：展开“也可以在 Cindy 对话中设置”，复制生成的指令到普通 Cindy 对话。Agent 会读取 prepare_schedule 返回的准确 cron 和时区，用 Cindy 原生调度工具创建或修改对应任务。
+到点后只调用 dispatch_report，转交配置阶段已授权的固定任务。重复触发不会重复新建任务，单个统计日对同一目标也不会重复投递。正在生成报告时，再点发送会显示原任务仍在进行。
 
-每次运行都重新读取社区及接收人配置。修改来源或接收目标后，后续运行使用新配置；修改执行时间时，请同步调整 Cindy“自动化”中的既有任务。暂停、删除、运行记录及实际下次时间也在该页面管理。
+也可展开“在 Cindy 对话中设置”，复制指令到普通 Cindy 对话，让 Agent 按 prepare_schedule 返回的准确 cron 和时区创建或修改已有任务。旧版自动化调用 prepare_run 时会得到复用固定任务的指引。
 
-**电脑和 Cindy 需要在执行时在线。** 本插件不提供关机后运行的云端调度。
+每次读取最新社区和接收配置，统计执行当天所选时区的前一自然日。修改时间后，请同步调整 Cindy“自动化”中的已有任务，避免重复创建。**电脑和 Cindy 需在执行时在线。**
+
+## 1.0.0 升级说明
+
+现有方案、社区、收件人和报告记录保持兼容。旧版配置按原有“聊天”渠道解释，不会因为填写了邮箱就悄悄改发邮件。升级后首次到配置页完成一次授权与连接检查；想收邮件时，明确切换到“飞书邮件收件箱”。
 
 ## 社区链接与接收人
 
@@ -46,8 +51,10 @@
 | --- | --- |
 | 整个 Discord 服务器 | 邀请链接或该服务器的完整频道链接 |
 | 指定频道 | discord.com/channels/服务器ID/频道ID；每行一个 |
-| 我自己 | 选择“我自己”，运行时核对当前连接的飞书账号 |
-| 指定个人 | 选择“飞书账号邮箱”或“用户 open_id”并填写对应值 |
+| 聊天 → 我自己 | 发到配置阶段核对的本人聊天 |
+| 邮件 → 我自己 | 发到配置阶段核对的主邮箱收件箱 |
+| 聊天 → 指定个人 | 用邮箱查找聊天用户，或填写 open_id；不发邮件 |
+| 邮件 → 指定收件人 | 填写实际收件邮箱 |
 | 指定群聊 | 填写 oc_ 开头的 chat_id，或包含 openChatId 的官方飞书会话链接 |
 
 填写社区名称不会自动授予访问权限。邀请链接只定位社群，读取消息依赖使用者自己的账号权限。无法读取、索引延迟、达到分页上限和图片未分析等情况会在报告中说明。
@@ -60,13 +67,15 @@
 - 没有可靠数据时不编造人数、情绪比例或增长率。
 - 观点、待核实说法与事实分开表述。
 - 成功读取且没有消息时显示“无新增”；读取失败显示“采集未完成”。
-- 成功发送需要记录实际消息回执；发送结果未知时保留待核对，不自动重发。
+- 聊天成功记录聊天消息回执；邮件记录邮件 message_id、实际发件和收件邮箱，并查询收件人投递状态。
+- “邮件服务已受理”不冒充“已到达收件箱”；受理、已投递、投递失败和未知分别显示。
+- 发送结果未知时保留待核对，不自动重发。
 
 ## 数据与授权
 
 配置使用 Cindy 为该安装实例隔离的 KV，完整报告与投递记录使用插件私有数据目录。历史保留可设为 7–120 天，默认 90 天；在途及未知投递记录不会自动清理。卸载插件会移除该安装的私有数据。
 
-插件没有独立的网络或模型凭据，依靠使用者已经认可的 Cindy 模型及连接器执行工作。保存配置不立即发送；“生成并发送”或用户保存的自动化才是对应的投递动作。所有任务可在 Cindy 中查看和停止。
+插件没有独立的网络或模型凭据，依靠使用者已经认可的 Cindy 模型及连接器执行工作。配置检查不发送测试内容；“发送报告”或用户保存的自动化才是对应的投递动作。邮件发送仍走连接器的 Cindy 标准草稿与发送流程，保留其倒计时和撤销行为。所有任务可在 Cindy 中查看和停止。
 
 ## 界面
 
@@ -99,7 +108,7 @@ node dev/ui-smoke.mjs
 
 macOS 默认使用已安装的 Google Chrome；其他环境可通过 CHROME_PATH 指定 Chrome/Chromium 可执行文件。界面测试截图写入 docs/screenshots。
 
-核心逻辑测试覆盖来源与目标校验、配置冲突、时区和夏令时、暂停或删除、并发投递占用、部分失败、未知结果、存储失败与历史保留。界面测试使用模拟宿主，不能替代导入后各使用者的真实账号授权和首次试跑。
+逻辑测试还覆盖首次配置原生授权、固定任务复用、原生授权拒绝后不绕过、按范围重新授权、每天一次派发，以及邮件与聊天回执分离。界面测试使用模拟宿主，不能替代导入后各使用者的真实账号授权和首次试跑。
 
 打包使用 Cindy 的 ghost_forge_pack；打包不会安装插件。源码与宿主 API 核对记录见 [SOURCE_VERIFICATION.md](SOURCE_VERIFICATION.md)，Agent 完整执行流程见 [随包手册](manual/daily-report/MANUAL.md)。
 
@@ -107,4 +116,4 @@ macOS 默认使用已安装的 Google Chrome；其他环境可通过 CHROME_PATH
 
 ## English
 
-Community Sentiment Monitor is a configurable Cindy plugin for Discord daily reports delivered to Feishu people or chats. Each installation starts empty and uses its owner's existing Cindy model and connected accounts. It includes previews, native automation drafts, per-recipient delivery receipts and duplicate protection. A running computer and Cindy are required; automation drafts must be reviewed and saved in Cindy.
+Community Sentiment Monitor is a configurable Cindy plugin for Discord daily reports delivered to Feishu chat or email. Complete setup once, then reuse the same approved task for on-demand and daily reports. Each installation starts empty and uses its owner's existing Cindy model and connected accounts. It includes previews, native automation drafts, per-recipient delivery receipts and duplicate protection. A running computer and Cindy are required; automation drafts must be reviewed and saved in Cindy.

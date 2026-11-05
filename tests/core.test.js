@@ -7,7 +7,7 @@ const SOURCE='https://discord.com/channels/123456789012345678/234567890123456789
 const GROUP='oc_examplegroup123456';
 const config=(extra={})=>({name:'测试监测方案',sources:[SOURCE],recipients:[{type:'self'}],time:'10:00',timezone:'Asia/Shanghai',...extra});
 function fixture(){let state={},now=Date.parse('2026-11-04T06:00:00Z');const files=new Map();const io={now:()=>now,readConfig:async()=>C.clone(state),writeConfig:async value=>{state=C.clone(value);},readReport:async path=>files.has(path)?C.clone(files.get(path)):null,writeReport:async(path,value)=>{files.set(path,C.clone(value));},deleteReport:async path=>{files.delete(path);}};return {service:new MonitorService(io),io,files,clock:value=>{now=Date.parse(value);}};}
-async function saved(extra){const f=fixture();f.monitor=await f.service.save(config(extra),0);return f;}
+async function saved(extra){const f=fixture();f.monitor=await f.service.save(config(extra),0);const scope=C.authorizationScope(f.monitor);await f.service.updateRuntime(f.monitor.id,()=>({taskId:'fixture-task',authorizedScope:scope,readyScope:scope,setupStatus:'ready',connection:{pluginId:'example-feishu',namespace:null,accountOpenId:'ou_exampleaccount123',accountName:'测试账号',mailboxAddress:'owner@example.com'}}));return f;}
 async function report(f,date='2026-11-03'){return f.service.storeReport({monitor_id:f.monitor.id,expected_revision:f.monitor.revision,report_date:date,status:'no_new',body:'开发测试日报：无新增。',message_count:0});}
 const begin=(f,key='self:',date='2026-11-03')=>f.service.beginDelivery({monitor_id:f.monitor.id,expected_revision:f.monitor.revision,report_date:date,recipient_key:key});
 const complete=(f,attempt,extra={})=>f.service.completeDelivery({monitor_id:f.monitor.id,report_date:'2026-11-03',recipient_key:attempt.recipient.key,delivery_token:attempt.delivery_token,status:'sent',message_id:'om_test_message_123',...extra});
@@ -47,7 +47,7 @@ test('stale editors cannot overwrite configuration and updates use fresh recipie
  const f=await saved();const a=await f.service.save({...config(),id:f.monitor.id,name:'新名称'},1);
  await assert.rejects(f.service.save({...config(),id:f.monitor.id,name:'旧页面'},1),{code:'REVISION_CONFLICT'});
  const b=await f.service.save({...config({sources:['https://discord.gg/newCommunity'],recipients:[{type:'email',value:'team@example.com'}]}),id:a.id},a.revision);
- const plan=await f.service.prepare(b.id,'send');assert.equal(plan.recipients[0].value,'team@example.com');assert.equal(plan.scope.sources[0].url,'https://discord.gg/newCommunity');
+ assert.equal((await f.service.prepare(b.id,'send')).state,'setup_required');const plan=await f.service.prepare(b.id,'preview');assert.equal(plan.recipients[0].value,'team@example.com');assert.equal(plan.scope.sources[0].url,'https://discord.gg/newCommunity');
 });
 test('a disabled or deleted monitor causes a run to skip',async()=>{
  const f=await saved({enabled:false});assert.equal((await f.service.prepare(f.monitor.id)).state,'paused');
@@ -90,10 +90,10 @@ test('unknown outcomes remain held, even after a long delay',async()=>{
 });
 test('changing a recipient invalidates stale send plans',async()=>{
  const f=await saved();await report(f);await f.service.save({...config({recipients:[{type:'email',value:'new@example.com'}]}),id:f.monitor.id},1);
- await assert.rejects(begin(f),{code:'REVISION_CONFLICT'});
+ await assert.rejects(begin(f),{code:'SETUP_REQUIRED'});
 });
 test('missing known report data fails closed instead of recreating an empty delivery ledger',async()=>{
- const f=await saved();await report(f);f.files.clear();await assert.rejects(f.service.prepare(f.monitor.id,'send'),{code:'REPORT_UNAVAILABLE'});
+ const f=await saved();await report(f);f.files.clear();await assert.rejects(f.service.getReport(f.monitor.id,'2026-11-03'),{code:'REPORT_UNAVAILABLE'});
 });
 test('failed private-storage writes cannot grant permission to send',async()=>{
  const f=await saved();await report(f);f.io.writeReport=async()=>{throw new Error('storage unavailable');};await assert.rejects(begin(f),/storage unavailable/);

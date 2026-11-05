@@ -1,9 +1,15 @@
 {
   "name": "community-sentiment-monitor",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
   "description": "社群舆情监控 — a configurable Cindy plugin",
-  "scripts": { "test": "node --test tests/*.test.js", "check": "node --check main.js && node --check ui.js && node --check core.js && node --check service.js", "preview": "node dev/preview.mjs" },
-  "engines": { "node": ">=20" }
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "check": "node --check main.js && node --check ui.js && node --check core.js && node --check service.js && node --check runtime.js",
+    "preview": "node dev/preview.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
 }

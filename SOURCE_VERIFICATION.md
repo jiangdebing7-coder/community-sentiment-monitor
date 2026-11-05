@@ -26,3 +26,13 @@ Important verified limits:
 - Account access and successful external delivery still depend on the actual installed connectors and their live receipts. Source availability cannot be inferred from code alone.
 
 Validation performed in this repository uses unit tests, a simulated-host browser smoke test and Cindy Forge package validation. The distributable is not automatically installed, and no new end-to-end account run is claimed before its owner imports and authorizes it.
+
+## Version 1.1.0 authorization flow
+
+The update uses the same verified 0.1.121 interfaces. It persists one task per monitor authorization scope, registers the bounded main-task scope through setTeamPlan, then invokes the real requestWriteAccess({mode: auto}) confirmation only from configuration. The registration does not start a team or create worker agents. Send and scheduler entry points only reuse approved tasks, never synthesize grants or choose bypassPermissions.
+
+The scope-generation counter changes for sources, recipient values or channel changes. Time and focus edits preserve the same task. Native Auto permissions are rechecked before dispatch. Duplicate daily triggers share a stable request key; unknown native dispatches do not receive fresh keys. Configuration and task identity persist across plugin logic-page restarts.
+
+Evidence: [main-task scope registration](https://github.com/makecindy/cindy/blob/727afb1ad6902176e2ec55254154b900c489a998/apps/desktop/src/main/maker-ipc/pluginTaskService.ts#L440), [actual task permission snapshot](https://github.com/makecindy/cindy/blob/727afb1ad6902176e2ec55254154b900c489a998/apps/desktop/src/shared/pluginTasks.ts#L24), [write-access refusal gate](https://github.com/makecindy/cindy/blob/727afb1ad6902176e2ec55254154b900c489a998/apps/desktop/src/main/maker-ipc/pluginWriteAccessGate.ts#L1).
+
+Mail remains delegated to the user's approved Feishu connector. It must use Cindy's standard mail-draft/send flow. Recipient email delivery status and chat message creation are distinct proofs; accepted mail is not reported as confirmed inbox delivery.

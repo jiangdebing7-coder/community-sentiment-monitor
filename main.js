@@ -2,6 +2,7 @@
 const ready = (async () => {
   const C = await import('/core.js');
   const {MonitorService} = await import('/service.js');
+  const {MonitorRuntime} = await import('/runtime.js');
   const channel = new BroadcastChannel('community-sentiment-monitor-v1');
   const unwrap = r => { C.ensure(r?.ok, r?.errorCode || 'HOST_STORAGE_UNAVAILABLE', r?.message || '宿主私有存储暂时不可用，请稍后重试。'); return r; };
   const io = {
@@ -14,34 +15,31 @@ const ready = (async () => {
   };
   const service = new MonitorService(io);
   async function changed() {channel.postMessage({type:'changed'});}
+  const runtime = new MonitorRuntime(service,cindy.tasks,changed);
   const tools = {
     list_monitors: () => service.getState(),
     save_monitor: a => service.save(a.monitor,a.expected_revision),
     delete_monitor: a => service.remove(a.monitor_id,a.expected_revision),
-    prepare_run: a => service.prepare(a.monitor_id,a.mode??'preview',a.report_date),
+    prepare_run: a => service.prepare(a.monitor_id,a.mode??'preview',a.report_date,a.execution_token),
+    prepare_setup: a => service.prepareSetup(a.monitor_id,a.setup_token),
+    complete_setup: a => service.completeSetup(a),
+    dispatch_report: a => runtime.dispatch(a.monitor_id),
     async store_report(a) {const r=await service.storeReport(a);await service.cleanup(a.monitor_id);await cindy.send({type:'badge',unread:true,summary:`${a.report_date} 日报已更新`});return r;},
     begin_delivery: a => service.beginDelivery(a),
     complete_delivery: a => service.completeDelivery(a),
     prepare_schedule: a => service.schedule(a.monitor_id)
   };
-  const mutations=new Set(['save_monitor','delete_monitor','store_report','begin_delivery','complete_delivery']);
+  const mutations=new Set(['save_monitor','delete_monitor','store_report','begin_delivery','complete_delivery','complete_setup']);
   async function dispatch(tool,args) {C.ensure(Object.hasOwn(tools,tool),'UNKNOWN_ACTION','此操作不可用。');const r=await tools[tool](args??{});if(mutations.has(tool))await changed();return r;}
-  async function startTask(id,mode,reqId) {
-    const {monitor}=await service.monitor(id); C.ensure(monitor?.enabled,'MONITOR_UNAVAILABLE','请先保存并启用监测方案。');
-    C.ensure(typeof cindy.tasks?.capabilities==='function','UNSUPPORTED','当前 Cindy 不支持插件任务，请使用兼容版本。');
-    const caps=await cindy.tasks.capabilities();
-    C.ensure(caps.operations?.includes('create')&&caps.operations?.includes('send'),'UNSUPPORTED','宿主尚未提供所需的任务接口。');
-    const task=await cindy.tasks.create({requestKey:`cm-${reqId}-create`,title:`${mode==='preview'?'预览日报':'发送日报'}｜${monitor.name}`.slice(0,100),isolatedWorkspace:true});
-    const run=await cindy.tasks.send({taskId:task.taskId,expectedRevision:task.revision,requestKey:`cm-${reqId}-send`,text:C.taskPrompt(id,mode)});
-    return {accepted:true,taskId:task.taskId,runId:run.runId,note:'已交给 Cindy 任务执行；接受任务不代表日报已生成或已投递。'};
-  }
   async function ui(action,args,reqId) {
     switch(action) {
       case 'state': return service.getState();
       case 'save': return dispatch('save_monitor',args);
       case 'delete': return dispatch('delete_monitor',args);
       case 'report': return service.getReport(args.monitor_id,args.report_date);
-      case 'preview': case 'send': return startTask(args.monitor_id,action,reqId);
+      case 'setup': return runtime.configure(args.monitor_id,reqId);
+      case 'runtime_status': return runtime.status(args.monitor_id);
+      case 'preview': case 'send': return runtime.start(args.monitor_id,action,reqId);
       case 'schedule': {
         const plan=await service.schedule(args.monitor_id);
         C.ensure(typeof cindy.agent?.requestSchedule==='function','UNSUPPORTED','当前 Cindy 不支持自动化草稿入口。');
@@ -64,10 +62,10 @@ const ready = (async () => {
     if(requests.has(msg.id)&&requests.get(msg.id).signature!==signature) {channel.postMessage({type:'response',id:msg.id,ok:false,error:{code:'REQUEST_KEY_CONFLICT',message:'同一次操作内容发生变化，请重新发起。'}});return;}
     if(!requests.has(msg.id)) {
       const promise=ui(msg.action,msg.args??{},msg.id).then(result=>({type:'response',id:msg.id,ok:true,result}),error=>({type:'response',id:msg.id,ok:false,error:{code:error.code||'OPERATION_FAILED',message:error.message||'操作失败，请稍后再试。'}}));
-      requests.set(msg.id,{signature,promise});
+      const record={signature,promise,response:null};requests.set(msg.id,record);
+      promise.then(response=>{record.response=response;channel.postMessage(response);});
       if(requests.size>100)requests.delete(requests.keys().next().value);
-    }
-    requests.get(msg.id).promise.then(response=>channel.postMessage(response));
+    }else if(requests.get(msg.id).response)channel.postMessage(requests.get(msg.id).response);
   };
   return {dispatch,channel};
 })();

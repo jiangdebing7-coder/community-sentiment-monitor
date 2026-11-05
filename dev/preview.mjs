@@ -4,7 +4,7 @@ import {readFile} from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';
 import {resolve,extname} from 'node:path';
 const root=fileURLToPath(new URL('../',import.meta.url));
-const allowed=new Set(['main-view.html','ui.css','ui.js','strings.js','core.js','service.js','main.js','dev/mock-host.js']);
+const allowed=new Set(['main-view.html','ui.css','ui.js','strings.js','core.js','service.js','runtime.js','main.js','dev/mock-host.js']);
 let config={};const files=new Map();const events=[];
 const json=(res,status,data)=>{res.writeHead(status,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify(data));};
 async function body(req){let s='';for await(const chunk of req){s+=chunk;if(s.length>200000)throw new Error('Request too large');}return s?JSON.parse(s):{};}
