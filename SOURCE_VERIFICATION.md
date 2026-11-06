@@ -22,7 +22,7 @@ Important verified limits:
 - requestSchedule requests a draft, not an installed schedule. Its accepted fields are name, prompt and optional intervalMs; clock-based cron/timezone values are not applied by this API. The interface explicitly asks users to check the native form, and the chat-based path returns the exact native schedule specification.
 - UI pages have no general preload or network privileges. They use /wake and a same-origin BroadcastChannel to communicate with the logic page.
 - /kv is capped at 64 KiB. Report bodies and per-recipient receipts therefore use the private fs data root. Data-storage errors stop delivery rather than resetting the receipt ledger.
-- Plugin tasks use the ordinary task model and permissions selected by the user. No hidden tasks, background Agent invocation, arbitrary target access, Node worker, secret or autonomous network capability is requested.
+- Plugin tasks use the ordinary task model and permissions selected by the user. No hidden tasks, background Agent invocation, arbitrary target access or Node worker is requested. Version 1.2.0 adds the explicit Discord-only network and vault-backed bot credential described below.
 - Account access and successful external delivery still depend on the actual installed connectors and their live receipts. Source availability cannot be inferred from code alone.
 
 Validation performed in this repository uses unit tests, a simulated-host browser smoke test and Cindy Forge package validation. The distributable is not automatically installed, and no new end-to-end account run is claimed before its owner imports and authorizes it.
@@ -40,3 +40,13 @@ Mail remains delegated to the user's approved Feishu connector. It must use Cind
 ## Version 1.1.1 setup recovery
 
 The executing host was rechecked on 2026-11-05 and is still 0.1.121. At the same pinned source commit, pluginTaskService.ts checks the immutable send-receipt fingerprint before the live revision, then returns REVISION_CONFLICT before inserting a receipt (lines 525–566). Only this definite pre-dispatch rejection allows one revision refresh with the same key and text. Unknown results retain the original tuple and are reconciled on an explicit setup retry. New setup tokens are staged with that tuple and do not invalidate the old token before acceptance; a result that arrives before acknowledgement remains valid. No native permissions are granted by these checks, and a rejected complete_setup call is never bypassed.
+
+## Version 1.2.0 official Discord REST collector
+
+The executing host was rechecked on 2026-11-06 and remains Cindy 0.1.121.
+
+The same supported 0.1.121 bridge provides cindy.fetch with a declared exact discord.com host, network.secrets Authorization format `Bot {value}`, /secrets write-only settings and fs root=data. Matching networkSlot.ts verifies that user headers are sanitized, credentials are injected by the Host and Retry-After is available to the plugin; the bot credential is never returned to the plugin logic or Agent. An explicit empty setup.requires preserves access to legacy browser configurations and history; bot preflight checks the optional credential only when that mode is configured. Network access is disclosed as a new installation permission.
+
+Official Discord API documentation was checked at commit da52492ced82d375981c46618cc3e182daada9a2 of discord/discord-api-docs: message.mdx (GET channel messages, limit 1–100, newest first, mutually exclusive before/after/around, empty response without Read Message History), guild.mdx (roles, self member, channels and active threads), channel.mdx (public archive timestamp cursor and joined-private archive ID cursor), application.mdx (message-content flags), permissions.mdx (role/member overwrite order), oauth2.mdx (actual current bot application identity) and rate-limits.mdx (Retry-After / retry_after).
+
+The collector uses only GET and the user-configured sources. It does not use personal-account tokens, a Gateway or privileged member-list access. Archived timestamp cursors retain submillisecond precision; joined-private archive pagination uses IDs. Local cache paths are isolated from reports/receipts, bounded, and checked before cleanup. Tests use mock API/Host data, not a real bot: actual credentials, server installation, channel coverage and first Feishu delivery remain owner-side acceptance steps. This is not a claim that the pre-existing Host Auto-review rejection has been fixed.

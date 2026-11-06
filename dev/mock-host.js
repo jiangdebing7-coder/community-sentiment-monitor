@@ -7,6 +7,14 @@
  const listeners=[];const calls=new Map();let taskNumber=0,runNumber=0;const tasks=new Map(),runs=new Map(),receipts=new Map();
  const event=data=>fetch('/dev/event',{method:'POST',body:JSON.stringify(data)});
  window.cindy={
+  fetch:async args=>{
+   const status=await(await fetch('/secrets')).json();if(!status[0]?.saved)return {ok:false,message:'Development bot credential not configured'};
+   const url=new URL(args.url),path=url.pathname.replace('/api/v10','');await event({kind:'discord-api-read',path});
+   const guildId='123456789012345678',channelId='234567890123456789',botId='345678901234567890',roleId='456789012345678901';
+   const channel={id:channelId,guild_id:guildId,name:'example-discussion',type:0,permission_overwrites:[]};
+   const data=path==='/users/@me'?{id:botId,username:'Preview bot',bot:true}:path==='/oauth2/applications/@me'?{id:'567890123456789012',flags:1<<19}:path===`/guilds/${guildId}`?{id:guildId,name:'Development preview',roles:[{id:guildId,permissions:'0'},{id:roleId,permissions:'66560'}]}:path===`/guilds/${guildId}/members/${botId}`?{roles:[roleId]}:path===`/guilds/${guildId}/channels`?[channel]:path===`/channels/${channelId}`?channel:path.endsWith('/threads/active')?{threads:[]}:path.includes('/threads/archived/')?{threads:[],has_more:false}:path.endsWith('/messages')?[]:null;
+   return {ok:true,status:data===null?404:200,headers:{},body:JSON.stringify(data)};
+  },
   onHostMessage:fn=>{listeners.push(fn);return()=>{};},
   fs:async args=>(await fetch('/dev/fs',{method:'POST',body:JSON.stringify(args)})).json(),
   send:async data=>{if(data.type==='tool-result'){const finish=calls.get(data.callId);calls.delete(data.callId);finish?.(data);}return {ok:true};},

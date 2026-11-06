@@ -3,6 +3,7 @@ const ready = (async () => {
   const C = await import('/core.js');
   const {MonitorService} = await import('/service.js');
   const {MonitorRuntime} = await import('/runtime.js');
+  const {DiscordCollector} = await import('/discord-collector.js');
   const channel = new BroadcastChannel('community-sentiment-monitor-v1');
   const unwrap = r => { C.ensure(r?.ok, r?.errorCode || 'HOST_STORAGE_UNAVAILABLE', r?.message || '宿主私有存储暂时不可用，请稍后重试。'); return r; };
   const io = {
@@ -11,20 +12,23 @@ const ready = (async () => {
     async writeConfig(state) { const r=await fetch('/kv',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(state)}); C.ensure(r.ok,'HOST_STORAGE_UNAVAILABLE',r.status===413?'配置容量已满，请精简后再试。':'配置保存失败，请保留输入后重试。'); },
     async readReport(path) {const r=await cindy.fs({op:'read',root:'data',path}); if(!r?.ok && (r?.errorCode==='NOT_FOUND'||r?.message===`文件不存在:${path}`))return null; unwrap(r); try{return JSON.parse(r.content);}catch{throw new C.MonitorError('REPORT_UNAVAILABLE','已有日报记录损坏，已停止发送以避免重复。');}},
     async writeReport(path,data) {unwrap(await cindy.fs({op:'write',root:'data',path,content:JSON.stringify(data)}));},
-    async deleteReport(path) {unwrap(await cindy.fs({op:'delete',root:'data',path}));}
+    async deleteReport(path) {const r=await cindy.fs({op:'delete',root:'data',path});if(!r?.ok&&(r?.errorCode==='NOT_FOUND'||r?.message===`文件不存在:${path}`))return;unwrap(r);}
   };
   const service = new MonitorService(io);
   async function changed() {channel.postMessage({type:'changed'});}
-  const runtime = new MonitorRuntime(service,cindy.tasks,changed);
+  const collector = new DiscordCollector(service,io,args=>cindy.fetch(args));
+  const runtime = new MonitorRuntime(service,cindy.tasks,changed,collector);
   const tools = {
     list_monitors: () => service.getState(),
     save_monitor: a => service.save(a.monitor,a.expected_revision),
     delete_monitor: a => service.remove(a.monitor_id,a.expected_revision),
-    prepare_run: a => service.prepare(a.monitor_id,a.mode??'preview',a.report_date,a.execution_token),
+    async prepare_run(a) {const plan=await service.prepare(a.monitor_id,a.mode??'preview',a.report_date,a.execution_token);if(plan.state==='ready'&&plan.monitor.collectionMode==='bot')plan.collection=await collector.info(a.monitor_id,plan.period.date);return plan;},
+    sync_messages: a => collector.sync(a.monitor_id,a.report_date),
+    read_messages: a => collector.read(a.monitor_id,a.report_date,a.cursor??'0:0'),
     prepare_setup: a => service.prepareSetup(a.monitor_id,a.setup_token),
     complete_setup: a => service.completeSetup(a),
     dispatch_report: a => runtime.dispatch(a.monitor_id),
-    async store_report(a) {const r=await service.storeReport(a);await service.cleanup(a.monitor_id);await cindy.send({type:'badge',unread:true,summary:`${a.report_date} 日报已更新`});return r;},
+    async store_report(a) {const {monitor}=await service.monitor(a.monitor_id);if(monitor?.collectionMode==='bot')await collector.validateReport(a);const r=await service.storeReport(a);await service.cleanup(a.monitor_id);await cindy.send({type:'badge',unread:true,summary:`${a.report_date} 日报已更新`});return r;},
     begin_delivery: a => service.beginDelivery(a),
     complete_delivery: a => service.completeDelivery(a),
     prepare_schedule: a => service.schedule(a.monitor_id)
@@ -39,6 +43,11 @@ const ready = (async () => {
       case 'report': return service.getReport(args.monitor_id,args.report_date);
       case 'setup': return runtime.configure(args.monitor_id,reqId);
       case 'runtime_status': return runtime.status(args.monitor_id);
+      case 'discord_status': {const monitor=args.monitor_id?(await service.monitor(args.monitor_id)).monitor:null;return collector.connectionStatus(monitor);}
+      case 'discord_credentials_changed': {const result=await service.invalidateDiscordChecks();await changed();return result;}
+      case 'discord_sync': return collector.sync(args.monitor_id);
+      case 'discord_collection': return collector.info(args.monitor_id);
+      case 'discord_clear_cache': return collector.clear(args.monitor_id);
       case 'preview': case 'send': return runtime.start(args.monitor_id,action,reqId);
       case 'schedule': {
         const plan=await service.schedule(args.monitor_id);

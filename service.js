@@ -16,12 +16,26 @@ export class MonitorService {
     return r;
   }
   async updateRuntime(id,fn) {return this.serial(async()=>{const {state,monitor}=await this.monitor(id);C.ensure(monitor,'MONITOR_NOT_FOUND','方案不存在。');monitor.runtime=await fn(C.clone(monitor.runtime??{}),C.clone(monitor));state.revision++;await this.io.writeConfig(state);return C.clone(monitor);});}
-  async prepareSetup(id,token){return this.serial(async()=>{const {monitor}=await this.monitor(id);C.ensure(C.currentSetupToken(monitor,token),'SETUP_EXPIRED','此检查已被替代或配置范围已改变。停止使用旧令牌，等待配置页发起的新检查；无需因此重新登录飞书。');return {monitor,setup_token:token,deliveryChannel:monitor.deliveryChannel??'chat',instruction:'只进行访问权和连接检查，不发送报告或测试邮件。仅在本次 prepare_setup 成功后，用本次返回的 setup_token 调用 complete_setup 写回真实结果。'};});}
+  async bindDiscordPreflight(id,proof){return this.serial(async()=>{
+    const {state,monitor}=await this.monitor(id);C.ensure(monitor?.enabled&&monitor.collectionMode==='bot'&&proof.scope===C.authorizationScope(monitor),'DISCORD_SCOPE_CHANGED','机器人检查期间方案范围已改变，请重新配置。');
+    const r=monitor.runtime??{};
+    if(r.discordBotId&&r.discordBotId!==proof.botId){
+      monitor.scopeRevision=(monitor.scopeRevision??0)+1;monitor.revision++;monitor.updatedAt=new Date(this.io.now()).toISOString();
+      Object.assign(r,{authorizedScope:null,readyScope:null,setupStatus:'required',setupToken:null,completedSetupToken:null,executionToken:null});
+    }
+    r.discordBotId=proof.botId;r.discordPreflight={...C.clone(proof),scope:C.authorizationScope(monitor)};monitor.runtime=r;state.revision++;await this.io.writeConfig(state);return C.clone(monitor);
+  });}
+  async invalidateDiscordChecks(){return this.serial(async()=>{
+    const state=await this.state();for(const m of state.monitors)if(m.collectionMode==='bot')m.runtime={...m.runtime,readyScope:null,discordPreflight:null,setupStatus:'required',lastError:'机器人安全配置已更新，请重新检查连接；相同机器人复用原执行授权。'};
+    state.revision++;await this.io.writeConfig(state);return {checksRequired:true};
+  });}
+  async prepareSetup(id,token){return this.serial(async()=>{const {monitor}=await this.monitor(id);C.ensure(C.currentSetupToken(monitor,token),'SETUP_EXPIRED','此检查已被替代或配置范围已改变。停止使用旧令牌，等待配置页发起的新检查；无需因此重新登录飞书。');return {monitor,setup_token:token,collectionMode:monitor.collectionMode??'browser',discordPreflight:monitor.runtime.discordPreflight??null,deliveryChannel:monitor.deliveryChannel??'chat',instruction:'只进行访问权和连接检查，不发送报告或测试邮件。仅在本次 prepare_setup 成功后，用本次返回的 setup_token 调用 complete_setup 写回真实结果。'};});}
   async completeSetup(args){return this.serial(async()=>{
     const {state,monitor}=await this.monitor(args.monitor_id);const runtime=monitor?.runtime;
     C.ensure(C.currentSetupToken(monitor,args.setup_token),'SETUP_EXPIRED','本次连接检查已被替代，不能覆盖当前结果。请等待配置页发起的新检查，不要重用历史令牌。');
     if(!args.success){runtime.setupStatus='needs_attention';runtime.readyScope=null;runtime.lastError=String(args.note||'连接检查未完成，请打开执行任务查看。').slice(0,1500);}
     else{
+      if(monitor.collectionMode==='bot')C.ensure(runtime.discordPreflight?.scope===C.authorizationScope(monitor)&&runtime.discordPreflight.botId===runtime.discordBotId,'DISCORD_CHECK_REQUIRED','缺少插件实际完成的机器人访问检查，不能由 Agent 自报成功。');
       const checks=args.source_checks??[];C.ensure(monitor.sources.every(s=>checks.some(c=>c.url===s.url&&c.accessible===true)),'SOURCE_CHECK_REQUIRED','所有已配置社区都需有实际访问检查结果。');
       const connection=args.connection;
       C.ensure(connection&&/^[a-z0-9][a-z0-9-]{0,63}$/.test(connection.pluginId||'')&&typeof connection.accountOpenId==='string'&&/^ou_[a-zA-Z0-9]+$/.test(connection.accountOpenId),'CONNECTION_REQUIRED','请提供实际核对的飞书插件与发送账号。');

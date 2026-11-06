@@ -25,6 +25,10 @@ try{
  }
  const desktop=await page('/?lang=zh-CN',1180);
  await desktop.evaluate("document.querySelector('#empty-new').click()");
+ const previewToken='preview-only-not-a-real-credential-1234';
+ await desktop.evaluate(`document.querySelector('#discord-bot-token').value=${JSON.stringify(previewToken)};document.querySelector('#discord-save-token').click()`);
+ await desktop.until("document.querySelector('#discord-secret-status').textContent.includes('已配置') && !document.querySelector('#monitor-form').inert");
+ assert.equal(await desktop.evaluate("document.querySelector('#discord-bot-token').value"),'');
  await desktop.evaluate("(() => { const set=(id,value)=>{const e=document.querySelector(id);e.value=value;e.dispatchEvent(new Event('input',{bubbles:true}));};set('#monitor-name','示例社区日报（开发预览）');set('#sources','https://discord.com/channels/123456789012345678/234567890123456789');document.querySelector('#monitor-form').requestSubmit(); })()");
  await desktop.until("document.querySelector('#monitor-count').textContent === '1' && document.querySelector('#setup-status').textContent.includes('配置已就绪') && !document.querySelector('#monitor-form').inert");
  await desktop.evaluate("document.querySelector('#preview').click()");await desktop.until("document.querySelector('#status').textContent.includes('已创建')");
@@ -48,6 +52,7 @@ try{
  events=await(await fetch(url+'/dev/events')).json();const replays=events.filter(e=>e.kind==='task-send-attempt').slice(-2);assert.equal(replays[0].requestKey,replays[1].requestKey);assert.equal(events.filter(e=>e.kind==='task-send'&&e.requestKey===replays[0].requestKey).length,1);assert.equal(events.filter(e=>e.kind==='task-create').length,3);assert.equal(events.filter(e=>e.kind==='permission-request').length,3);
  await desktop.evaluate("document.querySelector('#delivery-channel').value='mail';document.querySelector('#delivery-channel').dispatchEvent(new Event('change',{bubbles:true}));document.querySelector('#monitor-form').requestSubmit()");await desktop.until("document.querySelector('#setup-status').textContent.includes('配置已就绪') && !document.querySelector('#monitor-form').inert");assert.ok(await desktop.evaluate("document.querySelector('#setup-detail').textContent.includes('preview@example.com')"));
  const cfg=await(await fetch(url+'/kv')).json();const monitor=cfg.monitors[0];
+ await desktop.evaluate(`window.__previewHost.invokeTool('sync_messages',${JSON.stringify({monitor_id:monitor.id,report_date:'2026-11-03'})})`);
  await desktop.evaluate(`window.__previewHost.invokeTool('store_report',${JSON.stringify({monitor_id:monitor.id,expected_revision:monitor.revision,report_date:'2026-11-03',status:'no_new',body:'开发预览样报（虚构测试数据）\n\n昨日未检索到新增消息。\n玩家态度：数据不足，无法判断。\n本内容只用于测试界面，不代表真实社群情况。',message_count:0})})`);
  await desktop.until("!document.querySelector('#latest-card').hidden");
  await desktop.until("document.querySelector('#report-length').textContent.includes(' / 3000 字符')");
@@ -57,6 +62,8 @@ try{
  // Edits cannot silently disappear when changing monitors.
  await desktop.evaluate("document.querySelector('#focus').value='未保存修改';document.querySelector('#focus').dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('#new-monitor').click()");assert.equal(await desktop.evaluate("document.querySelector('#focus').value"),'未保存修改');
  await desktop.evaluate("document.querySelector('#discard').click()");await desktop.until("document.querySelector('#dirty').hidden");
+ assert.ok(!JSON.stringify(await(await fetch(url+'/kv')).json()).includes(previewToken));
+ assert.ok(!JSON.stringify(await(await fetch(url+'/dev/events')).json()).includes(previewToken));
  await mkdir('docs/screenshots',{recursive:true});
  for(const [name,path,width]of [['desktop-light','/?lang=zh-CN',1180],['mobile-dark','/?lang=zh-CN&theme=dark',320],['english-light','/?lang=en',760]]){
   const p=await page(path,width);await p.until("!document.querySelector('#monitor-form').hidden");
@@ -65,5 +72,5 @@ try{
   if(name==='english-light')assert.equal(await p.evaluate("document.querySelector('h1').textContent"),'A useful daily view of your community.');
   const shot=await p.call('Page.captureScreenshot',{format:'png',captureBeyondViewport:true});await writeFile(`docs/screenshots/${name}.png`,Buffer.from(shot.data,'base64'));assert.deepEqual(p.errors,[]);
  }
- assert.deepEqual(desktop.errors,[]);console.log(JSON.stringify({passed:true,checks:['configuration-time authorization','reused worker and one grant per scope','rejected setup result and explicit retry','native revision conflict retry','lost acknowledgement reconciliation without duplicate dispatch','retry does not rewrite configuration','chat and mail selection','preview dispatch','honest schedule draft','stored report UI','unsaved-edit protection','history browsing','320 px dark layout','1180 px light layout','English host locale'],screenshots:'docs/screenshots'},null,2));
+ assert.deepEqual(desktop.errors,[]);console.log(JSON.stringify({passed:true,checks:['vault-only bot credential input','official REST batch sync','raw credential excluded from config and events','configuration-time authorization','reused worker and one grant per scope','rejected setup result and explicit retry','native revision conflict retry','lost acknowledgement reconciliation without duplicate dispatch','retry does not rewrite configuration','chat and mail selection','preview dispatch','honest schedule draft','stored report UI','unsaved-edit protection','history browsing','320 px dark layout','1180 px light layout','English host locale'],screenshots:'docs/screenshots'},null,2));
 }finally{for(const ws of sockets)ws.close();child.kill();await new Promise(r=>child.once('exit',r));server.close();await rm(profile,{recursive:true,force:true});}

@@ -10,7 +10,7 @@ const INCOMPLETE_SETUP='连接检查已结束，但结果尚未保存。请点�
 // Native permissions remain owned by Cindy. Only the configuration action may
 // request Auto; send/scheduled actions can only reuse an already approved task.
 export class MonitorRuntime {
-  constructor(service,tasks,changed=()=>{}){this.service=service;this.tasks=tasks;this.changed=changed;this.locks=new Map();}
+  constructor(service,tasks,changed=()=>{},collector=null){this.service=service;this.tasks=tasks;this.changed=changed;this.collector=collector;this.locks=new Map();}
   exclusive(id,fn){const prior=this.locks.get(id)??Promise.resolve();const next=prior.catch(()=>{}).then(fn);this.locks.set(id,next);return next;}
   async capabilities(){C.ensure(typeof this.tasks?.capabilities==='function','UNSUPPORTED','当前 Cindy 不支持插件执行任务。');const caps=await this.tasks.capabilities();C.ensure(['create','get','send','getRun','requestWriteAccess','setTeamPlan'].every(op=>caps.operations?.includes(op)),'UNSUPPORTED','当前 Cindy 缺少一次性授权所需接口。');return caps;}
   async task(monitor,create=false){
@@ -90,6 +90,11 @@ export class MonitorRuntime {
   async configure(id,requestId){return this.exclusive(id,async()=>{
     await this.capabilities();
     let {monitor}=await this.service.monitor(id);C.ensure(monitor?.enabled,'MONITOR_UNAVAILABLE','请先保存并启用监测方案。');
+    if(monitor.collectionMode==='bot'&&!C.setupReady(monitor)){
+      C.ensure(this.collector,'DISCORD_UNSUPPORTED','当前插件没有机器人采集器，请更新后重试。');
+      try{monitor=await this.service.bindDiscordPreflight(id,await this.collector.preflight(monitor));}
+      catch(error){await this.service.updateRuntime(id,r=>({...r,setupStatus:'needs_attention',lastError:error.message}));await this.changed();throw error;}
+    }
     if(monitor.runtime?.taskId&&monitor.runtime.taskScope!==C.authorizationScope(monitor)){const oldRun=await this.active(monitor);C.ensure(!oldRun,'TASK_BUSY','旧范围的任务仍在执行，请先在 Cindy 中完成或停止，再为新范围配置授权。');}
     let task=await this.task(monitor,true);
     C.ensure(task.status==='active','TASK_UNAVAILABLE','原执行任务已归档或删除，请在 Cindy 中恢复该任务后继续配置。');
@@ -125,7 +130,7 @@ export class MonitorRuntime {
     const active=await this.active(monitor);if(active)return {state:'checking',taskId:task.taskId,runId:active.runId,accepted:true};
     const scope=C.authorizationScope(monitor);const token=crypto.randomUUID();
     await this.service.updateRuntime(id,(r,m)=>{C.ensure(C.authorizationScope(m)===scope,'SETUP_EXPIRED','配置范围已改变，请使用当前配置重新检查。');return {...r,authorizedScope:scope,permissionMode:task.permissionMode,lastError:null};});
-    const result=await this.submit(monitor,task,C.setupPrompt(id,token),'cm-setup-'+requestId,'setup',token);
+    const result=await this.submit(monitor,task,C.setupPrompt(id,token,monitor.collectionMode),'cm-setup-'+requestId,'setup',token);
     const latest=(await this.service.monitor(id)).monitor;
     return {...result,state:C.setupReady(latest)?'ready':latest.runtime.setupStatus};
   });}

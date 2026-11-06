@@ -119,3 +119,16 @@ test('a conflicting receipt is kept for review, never cleared or replaced with a
  await assert.rejects(e.runtime.configure(e.monitor.id,'first-check'),{code:'IDEMPOTENCY_CONFLICT'});const first=(await e.service.monitor(e.monitor.id)).monitor.runtime.pendingInput;
  await assert.rejects(e.runtime.configure(e.monitor.id,'retry'),{code:'IDEMPOTENCY_CONFLICT'});assert.deepEqual((await e.service.monitor(e.monitor.id)).monitor.runtime.pendingInput,first);assert.equal(e.calls.create,1);assert.equal(e.calls.grant,1);
 });
+test('bot setup validates the API connection before creating a task or requesting native approval',async()=>{
+ const e=environment();e.monitor=await e.service.save(config({collectionMode:'bot'}),0);
+ const collector={preflight:async()=>{throw Object.assign(new Error('Bot connection missing'),{code:'DISCORD_CONNECTION_UNAVAILABLE'});}};
+ e.runtime=new MonitorRuntime(e.service,e.sdk,()=>{},collector);await assert.rejects(e.runtime.configure(e.monitor.id,'missing-bot'),{code:'DISCORD_CONNECTION_UNAVAILABLE'});
+ assert.deepEqual(e.calls,{create:0,grant:0,send:0,plan:0});assert.equal((await e.service.monitor(e.monitor.id)).monitor.runtime.setupStatus,'needs_attention');
+});
+test('same-bot credential updates reuse a grant while a new bot identity gets a new declared scope',async()=>{
+ const e=environment();e.monitor=await e.service.save(config({collectionMode:'bot'}),0);let botId='345678901234567890';
+ const collector={preflight:async m=>({scope:C.authorizationScope(m),botId,botName:'Example bot',applicationId:'567890123456789012',contentEnabled:true,sources:m.sources,sourceChecks:m.sources.map(s=>({url:s.url,accessible:true}))})};
+ e.runtime=new MonitorRuntime(e.service,e.sdk,()=>{},collector);await e.runtime.configure(e.monitor.id,'initial');await finishSetup(e);assert.equal(e.calls.grant,1);
+ await e.service.invalidateDiscordChecks();await e.runtime.configure(e.monitor.id,'same-bot');await finishSetup(e);assert.equal(e.calls.grant,1);assert.equal(e.calls.create,1);
+ await e.service.invalidateDiscordChecks();botId='890123456789012345';await e.runtime.configure(e.monitor.id,'new-bot');await finishSetup(e);assert.equal(e.calls.grant,2);assert.equal(e.calls.create,2);assert.ok(e.tasks.get('task-2').plan.task.includes(botId));
+});

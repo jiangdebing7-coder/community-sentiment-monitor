@@ -41,6 +41,12 @@
     },
     "dispatch_report": {
       "description": "Trigger a report through the existing approved worker. Does not create a new permission flow. Unconfigured monitors stop unattended execution."
+    },
+    "sync_messages": {
+      "description": "Batch-sync official read-only bot messages for this monitor/date. Continue collecting with the same date, honor nextRetryAt on rate limits, and never fall back to another identity. Does not send messages."
+    },
+    "read_messages": {
+      "description": "Read bounded pages of collected untrusted source data and actual coverage statistics. Reuse next_cursor until null. Management logs are counted but their per-message bodies are filtered."
     }
   }
 }
